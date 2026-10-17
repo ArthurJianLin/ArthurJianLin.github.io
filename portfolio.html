@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>作品集 · 施健林</title>
+<meta name="description" content="施健林的作品集：Linux 内核 mm / BPF 上游补丁、eBPF 可观测性平台与 AI 网络自动诊断系统。">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./assets/css/style.css">
+<script defer src="./assets/js/main.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="nav-logo" href="./index.html">~/<span class="path">shijianlin</span><span class="cursor" aria-hidden="true"></span></a>
+    <nav aria-label="主导航">
+      <ul class="nav-menu">
+        <li><a href="./index.html">首页</a></li>
+        <li><a href="./portfolio.html" aria-current="page">作品集</a></li>
+        <li><a href="./blog.html">博客</a></li>
+        <li><a href="./about.html">关于</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ============ 页头 ============ -->
+  <section class="hero" style="padding-bottom:40px">
+    <div class="wrap">
+      <p class="hero-eyebrow"><span class="u">shijianlin@cloud</span><span class="sep">:</span><span class="path">~</span><span class="p">$</span> git log --author=shijianlin --stat</p>
+      <h1 style="font-size:clamp(28px,4vw,40px)">作品集：<em>内核</em>与底层工程</h1>
+      <p class="lede" style="margin-top:14px">
+        四组上游客贡献（已合入 Linux 主线 / linux-next / bpf-next 与在审系列），
+        两套生产级平台工程，外加线上内核排障日常。所有链接指向真实的 git 树与 lore 归档。
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ 1. 上游补丁 ============ -->
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="sect-eyebrow"><span class="u">shijianlin@cloud</span><span class="sep">:</span><span class="path">~</span><span class="p">$</span> git show --format=fuller</p>
+        <h2>Linux 内核上游客贡献</h2>
+      </div>
+
+      <!-- Patch 1: 主线 -->
+      <div class="proj">
+        <h3><span class="tag tag-fix">fix</span><span class="tag tag-tree">Linux 主线 · torvalds tree</span><code style="border:none;background:none;padding:0;color:var(--amber)">874611d193f2</code></h3>
+        <p class="stack">mm/page_alloc · NUMA 内存回收 · sysctl</p>
+        <ul>
+          <li><strong>问题</strong>：在 NUMA 架构上，<em>读取</em>内存相关 sysctl 参数会意外将节点的回收阈值清零——一个没有任何写入操作的"纯读"路径，触发了 NUMA min ratio 的重置。</li>
+          <li><strong>现象</strong>：多核 NUMA 服务器的内存回收出现抖动，水位判断失真，回收行为反复横跳，生产环境稳定性受损。</li>
+          <li><strong>修复</strong>：收敛 sysctl 处理逻辑，<em>仅写操作</em>更新 NUMA min ratio；读路径不再触碰任何全局状态。</li>
+          <li><strong>状态</strong>：代码已合入 Linux 主线（torvalds tree），随主线发布进入所有发行版。</li>
+        </ul>
+        <div class="box">
+          <div class="bx-head">COMMIT</div>
+          <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=874611d193f2">
+            git.kernel.org/torvalds/linux.git · 874611d193f2
+          </a>
+        </div>
+      </div>
+
+      <!-- Patch 2: linux-next -->
+      <div class="proj">
+        <h3><span class="tag tag-perf">perf</span><span class="tag tag-tree">linux-next · 已合入</span><code style="border:none;background:none;padding:0;color:var(--amber)">cfd999e61421</code></h3>
+        <p class="stack">mm/page_alloc · lowmem_reserve_ratio · sysctl 读写路径</p>
+        <ul>
+          <li><strong>问题</strong>：读取 <code>lowmem_reserve_ratio</code> 会触发全局内存预留量的不必要重算——把昂贵工作放进了高频且理应无副作用的读路径。</li>
+          <li><strong>修复</strong>：将 zone 预留量的刷新逻辑整体收敛到写路径；写入过程改造为事务性更新，保证多 zone 的一致性。</li>
+          <li><strong>加固</strong>：完善 sysctl 边界校验，非法输入不再进入计算路径，接口行为可预期。</li>
+          <li><strong>状态</strong>：补丁已合入 linux-next，排队进入主线。</li>
+        </ul>
+        <div class="box">
+          <div class="bx-head">COMMIT</div>
+          <a href="https://github.com/external-mirrors/linux-next/commit/cfd999e614213b7579f020f3b27796c4c10640eb">
+            github.com/external-mirrors/linux-next · cfd999e614213b7579f020f3b27796c4c10640eb
+          </a>
+        </div>
+      </div>
+
+      <!-- Patch 3: bpf_stream 系列 -->
+      <div class="proj">
+        <h3><span class="tag tag-fix">fix</span><span class="tag tag-tree">bpf-next · PATCH 0/5 在审</span><span style="color:var(--amber)">bpf: bpf_stream</span></h3>
+        <p class="stack">bpf · 容量泄漏 / read 语义 / UAPI 一致性 / selftest</p>
+        <ul>
+          <li><strong>多路径容量泄漏</strong>：梳理 bpf_stream 全部生命周期路径，修复多个异常场景下的容量泄漏。</li>
+          <li><strong>read UAPI 语义</strong>：修正 <code>bpf_stream_read</code> 的部分拷贝语义，使其与 UAPI 文档承诺一致——读到了多少字节、缓冲区里剩多少，不再含糊。</li>
+          <li><strong>超长报文校验</strong>：为超长报文增加显式校验，防止静默截断或越界。</li>
+          <li><strong>接口重构与测试</strong>：完成接口重构，补充 selftest 边界用例，系统级覆盖稳定性与 UAPI 一致性。</li>
+        </ul>
+        <div class="box">
+          <div class="bx-head">PATCH SERIES ON LORE</div>
+          <a href="https://lore.kernel.org/bpf/tencent_E69EAE29327E25B3548A9AF3F4FA289A6806@qq.com/T/">
+            lore.kernel.org/bpf · [bpf-next PATCH 0/5] bpf: bpf_stream
+          </a>
+        </div>
+      </div>
+
+      <!-- Patch 4: ringbuf doc -->
+      <div class="proj">
+        <h3><span class="tag tag-doc">doc</span><span class="tag tag-tree">bpf-next · 已合入</span><code style="border:none;background:none;padding:0;color:var(--amber)">f68df52fbad0</code></h3>
+        <p class="stack">bpf · ringbuf · UAPI 头文件注释</p>
+        <ul>
+          <li><strong>问题</strong>：<code>bpf_ringbuf_query</code> 帮助文档缺少 <code>BPF_RB_OVERWRITE_POS</code> 查询标识的说明，使用者只能去源码里猜语义。</li>
+          <li><strong>修复</strong>：补全缺漏的查询标识文档，同步修正内核 UAPI 头文件与 tools 目录下头文件的注释，两处保持一致。</li>
+          <li><strong>状态</strong>：已合入 bpf-next。</li>
+        </ul>
+        <div class="box">
+          <div class="bx-head">COMMIT</div>
+          <a href="https://git.kernel.org/pub/scm/linux/kernel/git/bpf/bpf-next.git/commit/?id=f68df52fbad0">
+            git.kernel.org/bpf/bpf-next.git · f68df52fbad0
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 2. 工程项目 ============ -->
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="sect-eyebrow"><span class="u">shijianlin@cloud</span><span class="sep">:</span><span class="path">~</span><span class="p">$</span> ls -la ~/projects/</p>
+        <h2>平台与系统工程项目</h2>
+      </div>
+
+      <div class="proj">
+        <h3>基于 eBPF 与内核模块的分布式底层可观测性平台与诊断工具箱</h3>
+        <p class="stack">eBPF (libbpf/BCC) · Linux Kernel Module · C/C++ · gRPC · Protobuf · MySQL</p>
+        <p style="color:var(--fg-dim);margin:0 0 14px">面向大规模服务器集群的低开销、无侵入系统级可观测平台，解决微服务场景长尾延迟与内核态异常难以排查的问题。</p>
+        <ul>
+          <li><strong>独立开发多款内核追踪工具</strong>：调度延迟统计、进程生命周期追踪、VFS 文件操作监控、Slab 内存统计、慢 IO 分析、Off-CPU 阻塞分析、KVM 虚拟化卡顿观测。</li>
+          <li><strong>内核态聚合</strong>：基于 BPF Map 在内核态构建延迟直方图，直接输出 P90 / P99 尾部延迟指标，建立云电脑卡顿基线。</li>
+          <li><strong>网络观测</strong>：网络子系统 eBPF 无侵入埋点，PERCPU_ARRAY Map 在内核态完成收发包指标聚合，实现高精度网络监控。</li>
+          <li><strong>开销纪律</strong>：探针整体运行开销控制在 2% 以内——这是平台的第一设计约束。</li>
+          <li><strong>验证方法</strong>：stress-ng / iperf3 构造 CPU 抢占、网络拥塞、IO 瓶颈等高负载场景，结合 perf 完成探针开销与指标准确性验证。</li>
+        </ul>
+      </div>
+
+      <div class="proj">
+        <h3>基于 eBPF / Netlink 的智能网络观测与 AI 自动化诊断系统</h3>
+        <p class="stack">Netlink · eBPF · TCP/IP · C/C++ · D-Bus · RAG / LLM</p>
+        <p style="color:var(--fg-dim);margin:0 0 14px">针对分布式与边缘设备的复杂网络连通性故障、长尾延迟问题，开发内核侧网络诊断守护进程，实现网络异常自动化根因分析。</p>
+        <ul>
+          <li><strong>免旁路采集</strong>：通过 INET_DIAG Netlink 直接与内核交互，采集 Socket 级 TCP 丢包、重传、连接状态机指标，规避频繁调用系统命令的开销。</li>
+          <li><strong>进程级归因</strong>：kprobe 实现五元组到进程 PID 的映射，内核态聚合单进程 / 单链路的 PPS、Bps 流量数据。</li>
+          <li><strong>故障注入校准</strong>：TC / Netem 完成丢包、延迟、抖动注入，模拟弱网环境，校验诊断模块的指标统计准确性。</li>
+          <li><strong>AI 闭环</strong>：构建「内核指标采集 → RAG 大模型分析 → 诊断报告输出」闭环；D-Bus 监听底层网络突变事件送入私有大模型做 RAG 推理，自动输出标准化网络诊断报告，完成故障自动化溯源。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 3. 生产排障与驱动 ============ -->
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="sect-eyebrow"><span class="u">shijianlin@cloud</span><span class="sep">:</span><span class="path">~</span><span class="p">$</span> journalctl --since="2023" | grep -i panic</p>
+        <h2>生产环境内核排障与硬件生态</h2>
+        <p>云电脑产品线（某头部云厂商） · 2023.07 至今</p>
+      </div>
+
+      <div class="proj">
+        <h3>内核疑难故障排查</h3>
+        <p class="stack">crash · vmcore · 内核 trace · 内存越界 / 空指针 / 死锁</p>
+        <ul>
+          <li>负责线上服务器 Kernel Panic、Oops、软硬死锁等疑难问题定位</li>
+          <li>熟练使用 crash 解析 vmcore、分析内核 Trace 日志，定位并修复内存越界、空指针、CPU / IO 突高等底层缺陷</li>
+          <li>处理数十起线上内核异常，提升集群服务器稳定性，降低宕机故障发生率</li>
+        </ul>
+      </div>
+
+      <div class="proj">
+        <h3>硬件驱动开发与内核适配</h3>
+        <p class="stack">网卡 · RAID 阵列卡 · 外设驱动移植</p>
+        <ul>
+          <li>负责定制内核的硬件生态兼容</li>
+          <li>完成多款网卡、RAID 阵列卡外设驱动移植适配</li>
+          <li>保障云电脑业务硬件外设稳定交付</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>NAME</h4>
+        <p style="margin:0">施健林 / Shi Jianlin — Linux 内核与系统工程师。所有上游客贡献均可在对应 git 树与 lore 归档中查证。</p>
+      </div>
+      <div>
+        <h4>SEE ALSO</h4>
+        <ul>
+          <li><a href="https://github.com/ArthurJianlin">github.com/ArthurJianlin</a></li>
+          <li><a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=874611d193f2">874611d193f2 @ mainline</a></li>
+          <li><a href="https://git.kernel.org/pub/scm/linux/kernel/git/bpf/bpf-next.git/commit/?id=f68df52fbad0">f68df52fbad0 @ bpf-next</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>CONTACT</h4>
+        <ul>
+          <li><a href="mailto:shijianlin11@foxmail.com">shijianlin11@foxmail.com</a></li>
+          <li><a href="./about.html">关于我 / 简历</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot-note">
+      <span>(C) 2026 施健林</span>
+      <span>page rendered at <span id="year">2026</span></span>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

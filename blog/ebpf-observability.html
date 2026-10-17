@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>把探针开销压进 2%：eBPF 可观测性平台的设计取舍 · 施健林</title>
+<meta name="description" content="基于 eBPF 与内核模块的分布式可观测性平台：为什么直方图放进 BPF Map、聚合在内核态完成、以及用 stress-ng 与 iperf3 验证探针开销与指标准确性。">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/style.css">
+<script defer src="../assets/js/main.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="nav-logo" href="../index.html">~/<span class="path">shijianlin</span><span class="cursor" aria-hidden="true"></span></a>
+    <nav aria-label="主导航">
+      <ul class="nav-menu">
+        <li><a href="../index.html">首页</a></li>
+        <li><a href="../portfolio.html">作品集</a></li>
+        <li><a href="../blog.html">博客</a></li>
+        <li><a href="../about.html">关于</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="section" style="border-top:none">
+    <div class="wrap">
+      <a class="backlink" href="../blog.html">&lt;- cd ../blog</a>
+
+      <div class="article">
+        <h1>把探针开销压进 2%：eBPF 可观测性平台的设计取舍</h1>
+        <p class="art-meta">
+          2026-10-09 · 约 11 分钟 · #ebpf #observability #performance<br>
+          技术栈：eBPF (libbpf/BCC) · LKM · C/C++ · gRPC · Protobuf · MySQL
+        </p>
+
+        <h2><span class="secno">0x00</span>"低开销"是约束，不是口号</h2>
+        <p>
+          做内核可观测性平台的第一个决定不是"采什么"，而是<strong>给自己立一条红线：
+          探针整体运行开销不得超过 2%</strong>。因为可观测性工具的第一要务是不改变被观测系统——
+          探针一旦成为生产负载的一部分，你采集到的所有数据都开始自带偏差，
+          长尾延迟越量越量的本质就变成了"探针打点抖动"。
+        </p>
+        <p>
+          这套平台服务于大规模服务器集群上的云电脑业务，要解决的是微服务场景的长尾延迟
+          与内核态异常难以排查的问题。无侵入（不改业务、不打补丁进生产内核）是第二条红线。
+          所有取舍都从这两条红线推导出来。
+        </p>
+
+        <h2><span class="secno">0x01</span>工具面：七个方向的内核追踪</h2>
+        <ul>
+          <li><strong>调度延迟统计</strong>——runqueue 里等了多久、谁在加塞；</li>
+          <li><strong>进程生命周期追踪</strong>——exec/exit 全程回放；</li>
+          <li><strong>VFS 文件操作监控</strong>——慢路径落到哪个 inode；</li>
+          <li><strong>Slab 内存统计</strong>——哪个 cache 在涨；</li>
+          <li><strong>慢 IO 分析</strong>——从块层视角拆解延迟；</li>
+          <li><strong>Off-CPU 阻塞分析</strong>——CPU 不忙但请求慢的那部分时间去了哪；</li>
+          <li><strong>KVM 虚拟化卡顿观测</strong>——对应云电脑场景的"画面卡一下"。</li>
+        </ul>
+        <p>
+          工具集的设计原则是<strong>按事件源切，不按指标切</strong>：每个探针围绕一个内核事件源
+          （tracepoint / kprobe）组织，跨工具复用同一套采集与上报通道。eBPF 用于绝大多数场景，
+          BPF 覆盖不了的深水区用 LKM 补位（这也是为什么平台是"eBPF + 内核模块"双引擎）。
+        </p>
+
+        <h2><span class="secno">0x02</span>关键取舍一：直方图放进 BPF Map 里算</h2>
+        <p>
+          P90 / P99 尾部延迟是怎么来的？不成熟的实现是：每个事件把时间戳带出来，
+          用户态聚合算分位数。这在高频事件（比如每次调度）下等于把采样风暴倒给用户态，
+          CPU 和内存双爆炸。
+        </p>
+        <p>
+          我们的做法是把<strong>延迟直方图直接建在 BPF Map 里</strong>：内核态按 bucket
+          累加计数，用户态只以低频周期读取直方图快照再算分位数。数据在源头就被压缩了几个数量级，
+          用户态拿到的永远是聚合结果而不是原始事件流。这也是我们建立云电脑卡顿基线的数据来源。
+        </p>
+
+        <h2><span class="secno">0x03</span>关键取舍二：聚合必须在内核态完成</h2>
+        <p>
+          网络监控是同样的道理。收发包路径是内核里最热的路径之一，在这里埋点，
+          第一原则是：<strong>每个包的事件处理时间必须接近常数，且绝不共享可写状态</strong>。
+        </p>
+        <p>
+          所以网络 eBPF 埋点用的是 <code>PERCPU_ARRAY</code> map——每个 CPU 一份独立计数器，
+          内核态完成收发包指标聚合，没有跨核争用、没有锁、没有 cacheline 弹跳。
+          用户态合计 per-CPU 计数即可得到高精度网络指标。这条"内核态聚合"纪律，
+          是探针开销能压在 2% 以内的最大功臣。
+        </p>
+
+        <h2><span class="secno">0x04</span>验证：怎么证明自己没骗自己</h2>
+        <p>
+          低开销必须被<strong>测</strong>出来，而不是设计出来。我们的验证分两层：
+        </p>
+        <ul>
+          <li><strong>开销层</strong>：用 <code>stress-ng</code> 构造 CPU 抢占、<code>iperf3</code>
+              打满网络、工具脚本制造 IO 瓶颈——在探针全开与关闭两种状态下跑相同的压力负载，
+              用 <code>perf</code> 对比吞吐与 CPU 占用差异，这就是那个 "2%" 的出处；</li>
+          <li><strong>准确性层</strong>：指标不能只是"有"，还得"对"。以已知正确的统计
+              （/proc 数据、perf 计数）为参照，校验直方图与聚合指标的准确度，
+              尤其是负载高峰下的一致性。</li>
+        </ul>
+        <p>
+          这一步最容易被省掉，但它恰恰是平台可信度的地基：<strong>没有对照组的监控数据，
+          只是比较好看的数字。</strong>
+        </p>
+
+        <h2><span class="secno">0x05</span>数据通道与落库</h2>
+        <p>
+          采集端与后端之间走 gRPC + Protobuf：二进制序列化紧凑、跨语言，agent 端 C/C++
+          实现不用背重型依赖；指标落 MySQL，按维度建索引支撑长期的基线对比。
+          这个选型不性感，但它足够无聊、足够稳——对生产系统来说，
+          无聊是优点不是缺点。
+        </p>
+
+        <h2><span class="secno">0x06</span>小结</h2>
+        <ul>
+          <li>先立红线（无侵入、&lt;2%），所有设计从红线推导；</li>
+          <li>高热路径的答案是 PERCPU 内核态聚合，直方图进 map；</li>
+          <li>指标的准确性要和开销一样认真地被验证——用压力工具和 perf 做对照；</li>
+          <li>数据通道选成熟无聊的技术，把风险预算省给内核侧。</li>
+        </ul>
+
+        <p>
+          相关阅读：<a href="./rag-network-diagnosis.html" style="color:var(--blue)">《当网络诊断遇上 RAG》</a>——
+          这套平台的网络观测部分后来长出了自动诊断能力，是另一个故事。
+        </p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>NAME</h4>
+        <p style="margin:0">施健林 / Shi Jianlin — 生产级平台工程复盘，细节以工程实现为准。</p>
+      </div>
+      <div>
+        <h4>SEE ALSO</h4>
+        <ul>
+          <li><a href="../portfolio.html">作品集 · 平台工程</a></li>
+          <li><a href="https://github.com/ArthurJianlin">github.com/ArthurJianlin</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>CONTACT</h4>
+        <ul>
+          <li><a href="mailto:shijianlin11@foxmail.com">shijianlin11@foxmail.com</a></li>
+          <li><a href="../about.html">关于我 / 简历</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot-note">
+      <span>(C) 2026 施健林</span>
+      <span>page rendered at <span id="year">2026</span></span>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

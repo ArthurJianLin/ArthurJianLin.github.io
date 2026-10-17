@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>读个 sysctl 也要全局重算？lowmem_reserve_ratio 读写解耦修复 · 施健林</title>
+<meta name="description" content="lowmem_reserve_ratio sysctl 读路径触发全局内存预留量不必要重算的性能修复，含写事务原子性与边界校验，已合入 linux-next（cfd999e61421）。">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/style.css">
+<script defer src="../assets/js/main.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="nav-logo" href="../index.html">~/<span class="path">shijianlin</span><span class="cursor" aria-hidden="true"></span></a>
+    <nav aria-label="主导航">
+      <ul class="nav-menu">
+        <li><a href="../index.html">首页</a></li>
+        <li><a href="../portfolio.html">作品集</a></li>
+        <li><a href="../blog.html">博客</a></li>
+        <li><a href="../about.html">关于</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="section" style="border-top:none">
+    <div class="wrap">
+      <a class="backlink" href="../blog.html">&lt;- cd ../blog</a>
+
+      <div class="article">
+        <h1>读个 sysctl 也要全局重算？lowmem_reserve_ratio 读写解耦修复</h1>
+        <p class="art-meta">
+          2026-10-03 · 约 9 分钟 · #mm #sysctl #performance<br>
+          对应补丁：<a href="https://github.com/external-mirrors/linux-next/commit/cfd999e614213b7579f020f3b27796c4c10640eb" style="color:var(--blue)">cfd999e61421</a> @ linux-next（已合入）
+        </p>
+
+        <h2><span class="secno">0x00</span>先说结论</h2>
+        <p>
+          在旧逻辑里，读取 <code>lowmem_reserve_ratio</code> 这个 sysctl 会触发
+          <strong>全局内存预留量（lowmem reserve）的重算</strong>——把一次昂贵且完全不必要的计算
+          放进了本应零成本的高频读路径。这个补丁把刷新逻辑收敛到写路径，
+          同时加固了写入的事务原子性和输入校验。补丁已合入 linux-next。
+        </p>
+
+        <h2><span class="secno">0x01</span>lowmem_reserve 到底 protects 什么</h2>
+        <p>
+          Linux 的 zone 物理内存是分层的：DMA、DMA32、Normal、Movable……分配器在 zonelist 里
+          优先用"合适"的 zone，必要时向其他 zone 回退。问题在于：普通分配完全可以从 DMA32 ——
+          甚至 DMA zone —— 回退成功，但 DMA 请求<strong>只能</strong>落在 DMA zone 上。
+        </p>
+        <p>
+          如果放任普通分配把这些低端 zone 的空闲页掏空，下一个设备驱动的 DMA 请求就会 OOM。
+          所以内核给每个 zone 维护了 <code>lowmem_reserve[]</code>：分配器在回退使用某个 zone 之前，
+          会从它的空闲页中扣除一笔保留量，确保低端 zone 不会被普通分配耗尽。
+        </p>
+        <p>
+          <code>/proc/sys/vm/lowmem_reserve_ratio</code> 就是用来自定义这笔保留量的：每个 zone
+          类别一个整数，全局预留量由它推导而来。推导过程就是
+          <code>__setup_per_zone_lowmem_reserve()</code>——<strong>遍历所有 zone、按比例重算每份
+          lowmem_reserve</strong>。这是全局状态，动一下就全局生效。
+        </p>
+
+        <h2><span class="secno">0x02</span>问题：读路径藏了一次全局重算</h2>
+        <p>
+          旧 handler 的结构是"不管读写，处理完都刷新一遍"。也就是说：
+        </p>
+        <pre class="code"><span class="u">shijianlin@cloud</span><span class="sep">:</span><span class="path">~</span><span class="p">$</span> cat /proc/sys/vm/lowmem_reserve_ratio
+<span class="c"># 旧逻辑等效于：</span>
+<span class="k">read_values</span>()          <span class="c"># 拿到当前值</span>
+<span class="k">__setup_per_zone_lowmem_reserve</span>()   <span class="c"># ← 读路径也走了这里</span></pre>
+        <p>
+          一次读 = 一次全 zone 重算。单看开销，这是一次纯浪费；更要命的是它违反了
+          <strong>"读操作无副作用"</strong>这个所有 proc/sysctl 接口的隐含契约。
+          监控系统每分钟抓一遍 sysctl 表——尤其那些采集 vm 目录下所有参数的 agent——
+          会以固定频率反复触发这次全局限重算。行为正确性侥幸没问题（算出来的值一样），
+          于是这个问题得以长期潜伏，表现成"读路径没来由地贵"。
+        </p>
+        <p>
+          顺带一提，读路径的副作用还可能更糟——我在另一个已合入主线的补丁里处理的
+          <a href="./numa-watermark-fix.html" style="color:var(--blue)">NUMA min ratio 问题</a>
+          就属此类：读一下直接把节点回收阈值清零。那个是正确性 bug，这个是性能 bug，本质是同一个反模式。
+        </p>
+
+        <h2><span class="secno">0x03</span>修复：刷新只属于写路径</h2>
+        <ul>
+          <li><strong>读写解耦</strong>：读路径只序列化并输出当前值，不再调用任何刷新函数；<code>__setup_per_zone_lowmem_reserve()</code> 只在写路径结束后调用。</li>
+          <li><strong>写入事务原子性</strong>：多个 zone 的 ratio 值在写入过程中先完成校验与暂存，全部合法后一次性生效并统一重算——不会出现"写了一半、预留量处于混合状态"的中间窗口。</li>
+          <li><strong>边界校验</strong>：对输入做显式边界检查，非法值直接拒绝，不再流进计算路径。</li>
+        </ul>
+
+        <h2><span class="secno">0x04</span>写 sysctl handler 的三条纪律</h2>
+        <p>这个补丁合入后，我给自己固化了三条 handler 纪律，也送给你：</p>
+        <ol>
+          <li><strong>读路径零副作用</strong>——不给共享状态任何"顺便"被改的机会；</li>
+          <li><strong>副作用尽量收敛到一次</strong>——批量参数要么全生效、要么全不生效（事务思维）；</li>
+          <li><strong>边界先于计算</strong>——任何用户输入，先证明它合法，再让它参与全局重算。</li>
+        </ol>
+        <p>
+          sysctl 是内核里最古老的接口之一，handler 写法五花八门；而正因为它是所有监控系统的必经之路，
+          每一行多余的代码都会被放大无数倍。这个补丁的意义不只是修掉一次重算，而是把这类接口
+          的行为拉回到契约之内。
+        </p>
+
+        <div class="box">
+          <div class="bx-head">COMMIT (linux-next)</div>
+          <a href="https://github.com/external-mirrors/linux-next/commit/cfd999e614213b7579f020f3b27796c4c10640eb">
+            github.com/external-mirrors/linux-next cfd999e614213b7579f020f3b27796c4c10640eb
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>NAME</h4>
+        <p style="margin:0">施健林 / Shi Jianlin — 本文为补丁复盘，具体 diff 以上游 commit 为准。</p>
+      </div>
+      <div>
+        <h4>SEE ALSO</h4>
+        <ul>
+          <li><a href="https://github.com/external-mirrors/linux-next/commit/cfd999e614213b7579f020f3b27796c4c10640eb">cfd999e61421 @ linux-next</a></li>
+          <li><a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=874611d193f2">874611d193f2 @ mainline</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>CONTACT</h4>
+        <ul>
+          <li><a href="mailto:shijianlin11@foxmail.com">shijianlin11@foxmail.com</a></li>
+          <li><a href="../about.html">关于我 / 简历</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot-note">
+      <span>(C) 2026 施健林</span>
+      <span>page rendered at <span id="year">2026</span></span>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

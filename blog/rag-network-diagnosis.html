@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>当网络诊断遇上 RAG：从内核指标到自动诊断报告 · 施健林</title>
+<meta name="description" content="基于 eBPF 与 Netlink 的智能网络观测与 AI 自动化诊断系统：INET_DIAG 采集、kprobe 五元组映射、Netem 故障注入校准与 RAG 诊断闭环。">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/style.css">
+<script defer src="../assets/js/main.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="nav-logo" href="../index.html">~/<span class="path">shijianlin</span><span class="cursor" aria-hidden="true"></span></a>
+    <nav aria-label="主导航">
+      <ul class="nav-menu">
+        <li><a href="../index.html">首页</a></li>
+        <li><a href="../portfolio.html">作品集</a></li>
+        <li><a href="../blog.html">博客</a></li>
+        <li><a href="../about.html">关于</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="section" style="border-top:none">
+    <div class="wrap">
+      <a class="backlink" href="../blog.html">&lt;- cd ../blog</a>
+
+      <div class="article">
+        <h1>当网络诊断遇上 RAG：从内核指标到自动诊断报告</h1>
+        <p class="art-meta">
+          2026-10-16 · 约 11 分钟 · #ebpf #netlink #rag #llm<br>
+          技术栈：Netlink · eBPF · TCP/IP · C/C++ · D-Bus · RAG / LLM
+        </p>
+
+        <h2><span class="secno">0x00</span>问题：分布式网络的"解释成本"</h2>
+        <p>
+          分布式与边缘设备环境里，网络连通性故障和长尾延迟的痛点从来不是"没有数据"，
+          而是<strong>数据到结论的距离太远</strong>。丢包原因可能在链路、在内核转发路径、
+          在对端、在中间某个 NAT——排查意味着登录机器、开 tcpdump、对着 ss 和
+          /proc/net/snmp 一层层人肉归因。边缘设备越多，这个解释成本越不可扩展。
+        </p>
+        <p>
+          这个项目的目标很直接：做一个内核侧网络诊断守护进程，
+          把"指标采集 → 根因分析 → 报告输出"整条链路自动化。
+        </p>
+
+        <h2><span class="secno">0x01</span>采集层一：INET_DIAG——不走系统命令的路</h2>
+        <p>
+          最容易想到的采集方式是周期性调用 <code>ss</code> / <code>netstat</code> 之类,
+          但这些命令本身是"读快照"的旁路工具：<strong>每次调用都是一次 fork/exec +
+          全表遍历</strong>，边缘设备上高频轮询的开销和抖动都不可接受。
+        </p>
+        <p>
+          我们改走 <strong>INET_DIAG Netlink</strong> 协议，直接与内核交互：
+        </p>
+        <ul>
+          <li>可以精确订阅与过滤——只问我要的 socket 集合；</li>
+          <li>一次内核态查询拿到 Socket 级别的 TCP 丢包、重传、连接状态机迁移等指标；</li>
+          <li>无需解析文本输出，省掉整个命令调用层的开销。</li>
+        </ul>
+
+        <h2><span class="secno">0x02</span>采集层二：kprobe 把五元组钉到进程上</h2>
+        <p>
+          光有 socket 级指标，答案还差一步："<strong>是谁</strong>的流量在丢？"
+          处理函数里天然能看到五元组，但 socket 到 PID 的映射需要一次查询——
+          我们用 kprobe 在内核里完成这件事：五元组 → 进程 PID，
+          然后在内核态直接聚合<strong>单进程 / 单链路的 PPS 和 Bps</strong>。
+        </p>
+        <p>
+          与可观测性平台同理：<strong>聚合在内核态做，用户态只取成果</strong>。
+          这样诊断守护进程在边缘设备上以 negligible 的常驻开销拿到了
+          "这行流量、这个进程、这条链路"三级归因的原子数据。
+        </p>
+
+        <h2><span class="secno">0x03</span>校准层：故障注入给探针"考试"</h2>
+        <p>
+          自动诊断的前提是<strong>指标本身可信</strong>。给探针出考卷的办法是故障注入：
+          用 TC 与 Netem 人为制造丢包、延迟、抖动——可控地重现弱网环境，
+          然后核对守护进程统计出来的指标是否与注入参数一致。
+        </p>
+        <p>
+          注入丢包率 x% → 采集模块必须统计出 x%（误差在声明范围内）；注入 50ms 延迟抖动 →
+          RTT 分布必须如实反映。这层校准做完，后面 RAG 输出的每一句话才有可信的输入。
+        </p>
+
+        <h2><span class="secno">0x04</span>诊断层：让 LLM 做它擅长的事</h2>
+        <p>
+          架构里的分工是关键：<strong>确定性的部分全在内核和守护进程里</strong>——
+          采集、聚合、归因、事件检测（D-Bus 监听底层网络突变）；<strong>LLM 只负责解释和组织</strong>——
+          把结构化指标与上下文组织成一份人能直接行动的标准化诊断报告。
+        </p>
+        <pre class="code"><span class="c">事件流：</span>
+D-Bus 突变事件 → 拉取该时间窗的 socket/进程/链路指标
+             → 组装上下文 → 私有 LLM <span class="k">RAG</span> 推理
+             → 输出标准化诊断报告（现象 / 证据 / 根因 / 建议）</pre>
+        <p>
+          为什么用 RAG 而不是裸 prompt：网络故障的解释需要大量的领域知识
+          （协议栈行为、内核参数语义、常见故障模式），RAG 让模型生成时"带着手册"——
+          引用的知识可溯源，也显著压低了幻觉概率。LLM 不做数值计算、不做直接决策，
+          它是一个<strong>会写事故报告的高级翻译</strong>——把内核语言翻译成值班工程师的行动语言。
+        </p>
+
+        <h2><span class="secno">0x05</span>几点经验</h2>
+        <ul>
+          <li><strong>把确定性留给内核</strong>：能 compile 进探针的逻辑，不要交给概率模型；</li>
+          <li><strong>先校准再自动</strong>：自动诊断的上限是指标的可信度，Netem 注入就是指标的质检车间；</li>
+          <li><strong>事件驱动而非全量轮询</strong>：D-Bus 突变触发按需分析，LLM 的调用成本和时效都可控；</li>
+          <li><strong>报告格式标准化</strong>：现象 / 证据 / 根因 / 建议四段式，值班的人才知道怎么接着干。</li>
+        </ul>
+
+        <p>
+          相关阅读：<a href="./ebpf-observability.html" style="color:var(--blue)">《把探针开销压进 2%》</a>——
+          这条"内核态聚合"的纪律，同样是本系统低开销的来源。
+        </p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>NAME</h4>
+        <p style="margin:0">施健林 / Shi Jianlin — 生产级平台工程复盘，细节以工程实现为准。</p>
+      </div>
+      <div>
+        <h4>SEE ALSO</h4>
+        <ul>
+          <li><a href="../portfolio.html">作品集 · 平台工程</a></li>
+          <li><a href="https://github.com/ArthurJianlin">github.com/ArthurJianlin</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>CONTACT</h4>
+        <ul>
+          <li><a href="mailto:shijianlin11@foxmail.com">shijianlin11@foxmail.com</a></li>
+          <li><a href="../about.html">关于我 / 简历</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot-note">
+      <span>(C) 2026 施健林</span>
+      <span>page rendered at <span id="year">2026</span></span>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

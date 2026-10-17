@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bpf_stream 系列复盘：一个子系统的五处修复（PATCH 0/5）· 施健林</title>
+<meta name="description" content="bpf_stream 子系统的系列修复：接口重构、多场景容量泄漏、超长报文校验、bpf_stream_read 部分拷贝语义修正与 selftest 边界用例。">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/style.css">
+<script defer src="../assets/js/main.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="nav-logo" href="../index.html">~/<span class="path">shijianlin</span><span class="cursor" aria-hidden="true"></span></a>
+    <nav aria-label="主导航">
+      <ul class="nav-menu">
+        <li><a href="../index.html">首页</a></li>
+        <li><a href="../portfolio.html">作品集</a></li>
+        <li><a href="../blog.html">博客</a></li>
+        <li><a href="../about.html">关于</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="section" style="border-top:none">
+    <div class="wrap">
+      <a class="backlink" href="../blog.html">&lt;- cd ../blog</a>
+
+      <div class="article">
+        <h1>bpf_stream 系列复盘：一个子系统的五处修复（PATCH 0/5）</h1>
+        <p class="art-meta">
+          2026-10-12 · 约 10 分钟 · #bpf #uapi #selftest<br>
+          系列：<a href="https://lore.kernel.org/bpf/tencent_E69EAE29327E25B3548A9AF3F4FA289A6806@qq.com/T/" style="color:var(--blue)">[bpf-next PATCH 0/5] @ lore.kernel.org</a>
+        </p>
+
+        <h2><span class="secno">0x00</span>为什么是一个系列</h2>
+        <p>
+          修单个 bug 是一件事；把一个子系统的问题<strong>成体系地清一遍</strong>是另一件事。
+          这个 PATCH 0/5 系列属于后者：接口重构、多场景容量泄漏、超长报文校验、
+          <code>bpf_stream_read</code> 的部分拷贝语义、selftest 边界用例——五个补丁，
+          组合起来才算把这个子系统的稳定性和 UAPI 一致性补齐。
+        </p>
+
+        <h2><span class="secno">0x01</span>容量泄漏的正确打开方式：审计所有退出路径</h2>
+        <p>
+          为什么修的是<strong>多路径</strong>容量泄漏？因为 stream 类对象的特点是生命周期长、
+          中途退出的分支多：
+        </p>
+        <ul>
+          <li>正常读写路径上的消费</li>
+          <li>错误路径的提前返回</li>
+          <li>销毁 / close 路径</li>
+          <li>部分读、超长报文等特殊输入下的路径分叉</li>
+        </ul>
+        <p>
+          单点修复"这里少减了一个计数"是打地鼠；把对象生命周期画出来，
+          <strong>列出每一条从创建到销毁的路径，逐条核对容量在 entry/exit 处守恒</strong>，
+          才能一次把多场景泄漏清干净。这个系列的前几个补丁就是按这个清单走的。
+        </p>
+
+        <h2><span class="secno">0x02</span>超长报文校验：拒绝静默截断</h2>
+        <p>
+          输入校验的时机决定了错误的表现形式。在进入流处理管线之前就做超长报文的显式校验，
+          非法输入会被明确拒绝；校验放在后面的隐式路径里，代价则是静默截断或不一致状态——
+          用户态拿到的数据看着好像没问题，其实语义已经错了。后者是最危险的失败模式：
+          <strong>不发警告，只是悄悄地坏</strong>。
+        </p>
+
+        <h2><span class="secno">0x03</span>read 的部分拷贝语义：UAPI 是合同</h2>
+        <p>
+          <code>bpf_stream_read</code> 的问题属于 UAPI 语义一档。一个 read 型接口必须在文档和实现之间回答清楚三个问题：
+        </p>
+        <ol>
+          <li>缓冲区比数据小的时候，<strong>拷贝多少、返回多少</strong>？</li>
+          <li>部分拷贝之后，<strong>流的消费位置推进到哪</strong>？</li>
+          <li>剩下的数据在哪里等下一次读？</li>
+        </ol>
+        <p>
+          部分拷贝的语义差一口气（例如：数据拷了、偏移也推了，但两者不一致），上层调用方就会
+          出现丢字节或重复字节级别的错乱，而且距离故障点非常远——bug 最终表现为应用层数据损坏，
+          谁也想不到源头是内核 UAPI 的语义含糊。这个系列的语义修正补丁，把"拷了多少、
+          推了多少"绑成了一次事务。
+        </p>
+        <p>
+          顺带说：UAPI 头文件的注释和实现是两份合同。我在
+          <a href="https://git.kernel.org/pub/scm/linux/kernel/git/bpf/bpf-next.git/commit/?id=f68df52fbad0" style="color:var(--blue)">ringbuf 文档补全</a>
+          那个补丁里补的是"文档这份合同"，这里补的是"实现这份合同"——两边都齐了，接口才算完整。
+        </p>
+
+        <h2><span class="secno">0x04</span>接口重构与 selftest 边界用例</h2>
+        <p>
+          系列里的重构补丁不是为重构而重构：泄漏修复与语义修正落地后，接口的内部形态
+          需要收敛（统一的进出账点、集中式的路径管理），否则同样的 bug 形态换个入口还会再长出来。
+        </p>
+        <p>
+          selftest 则覆盖了边界用例：零长度、超长报文、部分读连环、多次反复消费。
+          内核社区的共识是 <strong>no test, no merge</strong>——对生命周期类修复尤其如此，
+          因为这类 bug 的回归曲线非常陡：一次没测住的边界，几个月后以线上事故的形式回来。
+        </p>
+
+        <h2><span class="secno">0x05</span>方法论小结</h2>
+        <ul>
+          <li><strong>生命周期审计</strong>：对象的所有 entry/exit 路径一 张图，容量与引用守恒逐条对账；</li>
+          <li><strong>校验前置</strong>：让非法输入尽早失败，别给静默截断留缝；</li>
+          <li><strong>UAPI 当合同写</strong>：拷贝量、消费位置、返回值三者一致，注释与实现同步；</li>
+          <li><strong>系列化提交</strong>：同一子系统的一组问题按 review 友好的顺序拆 patch，0/N 的封面信里讲清全景。</li>
+        </ul>
+
+        <div class="box">
+          <div class="bx-head">PATCH SERIES ON LORE</div>
+          <a href="https://lore.kernel.org/bpf/tencent_E69EAE29327E25B3548A9AF3F4FA289A6806@qq.com/T/">
+            lore.kernel.org/bpf · [bpf-next PATCH 0/5] bpf: bpf_stream
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>NAME</h4>
+        <p style="margin:0">施健林 / Shi Jianlin — 本文为系列补丁复盘，具体 diff 以 lore 为准。</p>
+      </div>
+      <div>
+        <h4>SEE ALSO</h4>
+        <ul>
+          <li><a href="https://lore.kernel.org/bpf/tencent_E69EAE29327E25B3548A9AF3F4FA289A6806@qq.com/T/">PATCH 0/5 @ lore</a></li>
+          <li><a href="https://git.kernel.org/pub/scm/linux/kernel/git/bpf/bpf-next.git/commit/?id=f68df52fbad0">f68df52fbad0 @ bpf-next</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>CONTACT</h4>
+        <ul>
+          <li><a href="mailto:shijianlin11@foxmail.com">shijianlin11@foxmail.com</a></li>
+          <li><a href="../about.html">关于我 / 简历</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot-note">
+      <span>(C) 2026 施健林</span>
+      <span>page rendered at <span id="year">2026</span></span>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

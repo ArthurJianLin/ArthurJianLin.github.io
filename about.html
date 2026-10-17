@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>关于 · 施健林</title>
+<meta name="description" content="施健林：中山大学计算机硕士，内核工程师，Linux 内核 mm / BPF 方向贡献者。教育背景、职业经历与专业技能。">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./assets/css/style.css">
+<script defer src="./assets/js/main.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="nav-logo" href="./index.html">~/<span class="path">shijianlin</span><span class="cursor" aria-hidden="true"></span></a>
+    <nav aria-label="主导航">
+      <ul class="nav-menu">
+        <li><a href="./index.html">首页</a></li>
+        <li><a href="./portfolio.html">作品集</a></li>
+        <li><a href="./blog.html">博客</a></li>
+        <li><a href="./about.html" aria-current="page">关于</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="hero" style="padding-bottom:40px">
+    <div class="wrap">
+      <p class="hero-eyebrow"><span class="u">shijianlin@cloud</span><span class="sep">:</span><span class="path">~</span><span class="p">$</span> cat /proc/shijianlin --verbose</p>
+      <h1 style="font-size:clamp(28px,4vw,40px)">关于<em>我</em></h1>
+      <p class="lede" style="margin-top:14px">
+        施健林，Linux 内核 / 系统工程师。2020 年从机械工程跨考计算机，从此在内核里扎了根：
+        求职意向为内核 / 系统工程师、底层软件开发工程师。
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="mailto:shijianlin11@foxmail.com">shijianlin11@foxmail.com</a>
+        <a class="btn" href="https://github.com/ArthurJianlin">github.com/ArthurJianlin</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 教育与经历：dmesg 时间线 ============ -->
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="sect-eyebrow"><span class="u">shijianlin@cloud</span><span class="sep">:</span><span class="path">~</span><span class="p">$</span> dmesg -T --human</p>
+        <h2>教育与经历</h2>
+      </div>
+      <div class="dmesg">
+        <div class="dm-line"><span class="dm-ts">[2016 - 2020]</span><span class="dm-body"><b>电子科技大学</b> · 机械设计制造及其自动化（学士）<span class="dm-sub">成都。跨专业转向计算机的第一步：从这里动手拆装、逆向、重建对"系统"的理解。</span></span></div>
+        <div class="dm-line"><span class="dm-ts">[2020 - 2023]</span><span class="dm-body"><b>中山大学</b> · 计算机科学与技术（硕士）<span class="dm-sub">广州。正式进入操作系统与内核方向。</span></span></div>
+        <div class="dm-line"><span class="dm-ts">[2023.07 - now]</span><span class="dm-body"><b>头部云厂商 · 云电脑产品线</b> · 后端开发工程师（内核方向）<span class="dm-sub">内核疑难故障排查：线上 Kernel Panic / Oops / 软硬死锁定位；crash 解析 vmcore、内核 Trace 分析；处理数十起线上内核异常。<br>底层可观测性与诊断工具研发：基于 eBPF / SystemTap / LKM 的低开销无侵入内核探针，覆盖调度器、网络协议栈、VFS；探针开销控制在 2% 以内。<br>硬件驱动开发与内核适配：多款网卡、RAID 阵列卡外设驱动移植，保障云电脑硬件生态稳定交付。</span></span></div>
+        <div class="dm-line"><span class="dm-ts">[upstream&nbsp;&nbsp;]</span><span class="dm-body"><b>Linux 内核社区贡献</b>：mm / BPF 方向<span class="dm-sub">补丁合入 Linux 主线（torvalds tree）、linux-next 与 bpf-next——详见 <a href="./portfolio.html" style="color:var(--blue)">作品集</a>。</span></span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 技能：.config 风格 ============ -->
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="sect-eyebrow"><span class="u">shijianlin@cloud</span><span class="sep">:</span><span class="path">~</span><span class="p">$</span> cat /proc/config.gz | grep "=y"</p>
+        <h2>专业技能</h2>
+      </div>
+      <div class="config-file">
+        <div class="cfg-row"><span class="cfg-key">CONFIG_MM=y</span><span class="cfg-val">内存管理：Buddy、Slab/Slub、THP、NUMA、页回收与水位<span class="m"> // 两个上游补丁的主战场</span></span></div>
+        <div class="cfg-row"><span class="cfg-key">CONFIG_SCHED=y</span><span class="cfg-val">CFS / EEVDF 调度器：抢占、负载均衡、延迟分析</span></div>
+        <div class="cfg-row"><span class="cfg-key">CONFIG_BPF=y</span><span class="cfg-val">BPF 子系统原理：verifier、map、ringbuf、kprobe/tracepoint 埋点</span></div>
+        <div class="cfg-row"><span class="cfg-key">CONFIG_VFS=y</span><span class="cfg-val">VFS 与文件系统、中断 / 软中断、网络协议栈</span></div>
+        <div class="cfg-row"><span class="cfg-key">CONFIG_EBPF_TOOL=m</span><span class="cfg-val">性能观测与故障诊断：eBPF、perf、ftrace、systemtap<span class="m"> // libbpf / BCC 双修</span></span></div>
+        <div class="cfg-row"><span class="cfg-key">CONFIG_CRASH=y</span><span class="cfg-val">crash / vmcore 分析：独立定位 Panic、死锁、OOM、内存泄漏、调度抖动等疑难问题</span></div>
+        <div class="cfg-row"><span class="cfg-key">CONFIG_TUNING=y</span><span class="cfg-val">性能调优：sysctl 调优、CPU 调度优化、缓存、上下文切换优化</span></div>
+        <div class="cfg-row"><span class="cfg-key">CONFIG_LANG=y</span><span class="cfg-val">开发语言与工具链：熟练 C / C++，掌握 Shell、Python；GDB、Git、Makefile、CM</span></div>
+        <div class="cfg-row" style="border-bottom:none"><span class="cfg-key">CONFIG_NETLINK=m</span><span class="cfg-val">内核网络编程：Netlink（INET_DIAG）、TCP/IP 诊断、TC / Netem 故障注入</span></div>
+      </div>
+      <p class="mono" style="color:var(--fg-faint);font-size:13px;margin-top:18px">
+        # End of config. 没有 =d 选项——要么用，要么没有。
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ 本站 ============ -->
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="sect-eyebrow"><span class="u">shijianlin@cloud</span><span class="sep">:</span><span class="path">~</span><span class="p">$</span> uname -a</p>
+        <h2>关于本站</h2>
+      </div>
+      <p style="max-width:640px">
+        纯静态站点，无框架、无依赖、无 cookie——HTML 是手写的，
+        风格照着终端和 git log 长出来。部署在 GitHub Pages 上，
+        源码与文章更新都走 git。所有补丁描述均可在
+        <a href="https://git.kernel.org/" style="color:var(--blue);text-decoration:none">git.kernel.org</a>
+        与 <a href="https://lore.kernel.org/" style="color:var(--blue);text-decoration:none">lore.kernel.org</a> 查证。
+      </p>
+      <p style="color:var(--fg-dim);max-width:640px">
+        欢迎内核 / 系统方向的同行与团队交流：工作机会、内核问题、或者只是聊聊天云电脑的内核负载。
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>NAME</h4>
+        <p style="margin:0">施健林 / Shi Jianlin — 内核 / 系统工程师、底软开发工程师。</p>
+      </div>
+      <div>
+        <h4>SEE ALSO</h4>
+        <ul>
+          <li><a href="./portfolio.html">作品集 · 上游补丁</a></li>
+          <li><a href="./blog.html">博客 · 全部文章</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>CONTACT</h4>
+        <ul>
+          <li><a href="mailto:shijianlin11@foxmail.com">shijianlin11@foxmail.com</a></li>
+          <li><a href="https://github.com/ArthurJianlin">github.com/ArthurJianlin</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot-note">
+      <span>(C) 2026 施健林</span>
+      <span>page rendered at <span id="year">2026</span></span>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

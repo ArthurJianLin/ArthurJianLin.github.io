@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>博客 · 施健林</title>
+<meta name="description" content="施健林的技术博客：Linux 内核 mm / BPF 补丁复盘、eBPF 可观测性工程、内核排障实战。">
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./assets/css/style.css">
+<script defer src="./assets/js/main.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="nav-logo" href="./index.html">~/<span class="path">shijianlin</span><span class="cursor" aria-hidden="true"></span></a>
+    <nav aria-label="主导航">
+      <ul class="nav-menu">
+        <li><a href="./index.html">首页</a></li>
+        <li><a href="./portfolio.html">作品集</a></li>
+        <li><a href="./blog.html" aria-current="page">博客</a></li>
+        <li><a href="./about.html">关于</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="hero" style="padding-bottom:40px">
+    <div class="wrap">
+      <p class="hero-eyebrow"><span class="u">shijianlin@cloud</span><span class="sep">:</span><span class="path">~</span><span class="p">$</span> ls -lt ~/blog/</p>
+      <h1 style="font-size:clamp(28px,4vw,40px)">博客：<em>写在补丁之后</em></h1>
+      <p class="lede" style="margin-top:14px">
+        每篇都对应一段真实的工程过程——上游补丁的来龙去脉、平台设计的取舍、
+        生产环境里最硬的 bug。写给同样在这个领域干活的人。
+      </p>
+    </div>
+  </section>
+
+  <section class="section" style="border-top:none">
+    <div class="wrap">
+      <ul class="postlist">
+
+        <li class="postitem">
+          <span class="pi-date">2026-10-16</span>
+          <div class="pi-main">
+            <a href="./blog/rag-network-diagnosis.html"><span class="pi-title">当网络诊断遇上 RAG：从内核指标到自动诊断报告</span></a>
+            <p class="pi-desc">INET_DIAG 免旁路采集、kprobe 五元组映射、Netem 故障注入校准，最后用 RAG 把内核指标流翻译成人能直接行动的诊断报告。</p>
+            <span class="pi-tags">#ebpf · #netlink · #rag · #llm</span>
+          </div>
+          <span class="pi-arrow" aria-hidden="true">-&gt;</span>
+        </li>
+
+        <li class="postitem">
+          <span class="pi-date">2026-10-12</span>
+          <div class="pi-main">
+            <a href="./blog/bpf-stream-series.html"><span class="pi-title">bpf_stream 系列复盘：一个子系统的五处修复（PATCH 0/5）</span></a>
+            <p class="pi-desc">接口重构、多路径容量泄漏、超长报文校验、read 部分拷贝语义——怎么把一个子系统的稳定性和 UAPI 一致性一次性补齐。</p>
+            <span class="pi-tags">#bpf · #uapi · #selftest</span>
+          </div>
+          <span class="pi-arrow" aria-hidden="true">-&gt;</span>
+        </li>
+
+        <li class="postitem">
+          <span class="pi-date">2026-10-09</span>
+          <div class="pi-main">
+            <a href="./blog/ebpf-observability.html"><span class="pi-title">把探针开销压进 2%：eBPF 可观测性平台的设计取舍</span></a>
+            <p class="pi-desc">为什么直方图要放进 BPF Map 里算、聚合为什么必须在内核态完成、压力测试怎么证明探针没有骗自己——低开销是一条纪律，不是一个口号。</p>
+            <span class="pi-tags">#ebpf · #observability · #performance</span>
+          </div>
+          <span class="pi-arrow" aria-hidden="true">-&gt;</span>
+        </li>
+
+        <li class="postitem">
+          <span class="pi-date">2026-10-05</span>
+          <div class="pi-main">
+            <a href="./blog/numa-watermark-fix.html"><span class="pi-title">一次「读操作」清零了回收阈值：NUMA 水位 bug 的定位与修复</span></a>
+            <p class="pi-desc">谁也想不到，读一个内存 sysctl 参数会让 NUMA 节点的回收阈值归零。这篇已合入 Linux 主线的 fix，讲讲 bug 的来龙去脉。</p>
+            <span class="pi-tags">#mm · #numa · #linux-mainline</span>
+          </div>
+          <span class="pi-arrow" aria-hidden="true">-&gt;</span>
+        </li>
+
+        <li class="postitem">
+          <span class="pi-date">2026-10-03</span>
+          <div class="pi-main">
+            <a href="./blog/lowmem-reserve-ratio.html"><span class="pi-title">读个 sysctl 也要全局重算？lowmem_reserve_ratio 读写解耦修复</span></a>
+            <p class="pi-desc">一个高频读路径里藏着一次全局内存预留量的重算。这个已合入 linux-next 的补丁把它搬回了它该在的地方——写路径。</p>
+            <span class="pi-tags">#mm · #sysctl · #performance</span>
+          </div>
+          <span class="pi-arrow" aria-hidden="true">-&gt;</span>
+        </li>
+
+      </ul>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>NAME</h4>
+        <p style="margin:0">施健林 / Shi Jianlin — 文章均基于真实补丁与工程实践，对应链接可在上游查证。</p>
+      </div>
+      <div>
+        <h4>SEE ALSO</h4>
+        <ul>
+          <li><a href="https://github.com/ArthurJianlin">github.com/ArthurJianlin</a></li>
+          <li><a href="./portfolio.html">作品集 · 内核贡献</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>CONTACT</h4>
+        <ul>
+          <li><a href="mailto:shijianlin11@foxmail.com">shijianlin11@foxmail.com</a></li>
+          <li><a href="./about.html">关于我 / 简历</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot-note">
+      <span>(C) 2026 施健林</span>
+      <span>page rendered at <span id="year">2026</span></span>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

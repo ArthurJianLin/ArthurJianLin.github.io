@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>一次「读操作」清零了回收阈值：NUMA 水位 bug 的定位与修复 · 施健林</title>
+<meta name="description" content="NUMA 架构下读取内存 sysctl 参数意外清零节点回收阈值的隐蔽 bug 定位与修复，补丁已合入 Linux 主线（874611d193f2）。">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/style.css">
+<script defer src="../assets/js/main.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到正文</a>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="nav-logo" href="../index.html">~/<span class="path">shijianlin</span><span class="cursor" aria-hidden="true"></span></a>
+    <nav aria-label="主导航">
+      <ul class="nav-menu">
+        <li><a href="../index.html">首页</a></li>
+        <li><a href="../portfolio.html">作品集</a></li>
+        <li><a href="../blog.html">博客</a></li>
+        <li><a href="../about.html">关于</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="section" style="border-top:none">
+    <div class="wrap">
+      <a class="backlink" href="../blog.html">&lt;- cd ../blog</a>
+
+      <div class="article">
+        <h1>一次「读操作」清零了回收阈值：NUMA 水位 bug 的定位与修复</h1>
+        <p class="art-meta">
+          2026-10-05 · 约 8 分钟 · #mm #numa #sysctl<br>
+          对应补丁：<a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=874611d193f2" style="color:var(--blue)">874611d193f2</a> @ torvalds/linux
+        </p>
+
+        <h2><span class="secno">0x00</span>一个反直觉的现象</h2>
+        <p>
+          最隐蔽的 bug 往往不是"某个操作坏了"，而是<strong>某个什么都不该发生的操作，悄悄改了状态</strong>。
+        </p>
+        <p>
+          这个问题的现象出现在多核 NUMA 服务器上：内存回收行为出现抖动——回收阈值忽然失真，
+          kswapd 与 direct reclaim 的触发像是被人随机干预过。而排查的结果是：触发条件仅仅是
+          <em>读取</em>了一个内存相关的 sysctl 参数。
+        </p>
+        <p>
+          没有写入，没有配置变更，<code>cat</code> 一下，节点的回收阈值就归零了。
+        </p>
+
+        <h2><span class="secno">0x01</span>背景：per-node 的回收阈值在哪</h2>
+        <p>
+          除了大家熟悉的每个 zone 的 min/low/high watermark，内核在 NUMA 节点级别还维护着一组
+          <strong>回收决策参数</strong>——用于判断"这个节点上还有多少比例的页面值得回收、
+          什么条件下继续持有"。这组参数挂在每个节点的 <code>struct pglist_data（pgdat）</code> 上，
+          通过 sysctl 暴露给管理员调节。
+        </p>
+        <p>
+          这类参数有个共同特征：<strong>它们是每个 node 一份</strong>。所以 sysctl handler
+          要更新它们时，必然要遍历所有 online node 逐个赋值。问题，恰恰就出在这个"逐个赋值"的循环里——
+          它被读写两条路径共享了。
+        </p>
+
+        <h2><span class="secno">0x02</span>根因：读路径复用了写路径的副作用</h2>
+        <p>
+          sysctl handler 的经典反模式长这样：handler 定义了一个局部变量承接参数值，检查、处理，
+          最后不管这次调用来自内核还是用户、是读还是写，都会把值<strong>回写</strong>到全局状态。
+        </p>
+        <p>
+          在这个 bug 里，读路径上那个局部变量并不是管理员设置的值——它要么是默认值，要么根本没有经过
+          有意义的初始化。但 handler 照样走进了"遍历每个 node、更新 min ratio"的赋值循环。
+          结果就是：<em>一次纯读操作，把每个 NUMA 节点的回收阈值改写了一遍</em>。
+        </p>
+        <pre class="code"><span class="c">/* 反模式示意，非原 diff */</span>
+static int handler(...) {
+        int val = <span class="k" >...;</span> <span class="c">// 读路径上：不是用户写入的值</span>
+
+        <span class="c">// 这段逻辑本应只属于写路径：</span>
+        <span class="k" >for_each_online_node</span>(nid) {
+                NODE_DATA(nid)-&gt;min_ratio = val; <span class="c">// 读一下 = 全节点改写</span>
+        }
+        ...
+}</pre>
+        <p>
+          阈值被清零后，节点级的回收决策就失去了正确的参考点：本来不该回收的时候开始回收，
+          该回收的时候判断又可能失准，宏观上就表现为多核 NUMA 服务器的<strong>内存回收抖动</strong>。
+          这种抖动在单次监控里很难直接归因——毕竟谁会怀疑一个 <code>cat</code> 呢？
+        </p>
+
+        <h2><span class="secno">0x03</span>定位思路</h2>
+        <ul>
+          <li><strong>把"谁在改状态"和"谁在读状态"分开</strong>：回收阈值属于内核内部状态，先确认管理员侧没有并发写入（audit / shell history）。</li>
+          <li><strong>最小化复现</strong>：在一台干净的 NUMA 机器上，读操作前后分别抓取节点参数与水位，确认"读"本身改变了状态。</li>
+          <li><strong>锁定 handler</strong>：顺着该 sysctl 的注册点找到 handler，检查局部变量的生命周期与赋值循环的可达性——读路径也会走到它。</li>
+        </ul>
+
+        <h2><span class="secno">0x04</span>修复：让写回到写的地方去</h2>
+        <p>
+          修法说起来只有一句话：<strong>仅写操作更新 NUMA min ratio</strong>。
+        </p>
+        <p>
+          读路径只负责把状态带出去，不再触碰任何全局状态；写路径在校验通过后再执行遍历赋值。
+          这和我在另一个补丁里处理的 <code>lowmem_reserve_ratio</code> 是同一个哲学——
+          <strong>读路径必须无副作用</strong>，代价再小的副作用乘上读取频率都是灾难，更别说清零阈值。
+        </p>
+
+        <h2><span class="secno">0x05</span>影响与收尾</h2>
+        <p>
+          修复已合入 Linux 主线（torvalds tree），会随主线发布进入所有发行版。对所有多节点的服务器
+          ——从两路的整机到大规模 NUMA 的机架机器——读一个 sysctl 不再是他们负载曲线里的一颗暗雷。
+        </p>
+        <div class="box">
+          <div class="bx-head">COMMIT (torvalds/linux)</div>
+          <a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=874611d193f2">
+            git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git 874611d193f2
+          </a>
+        </div>
+        <p>
+          相关阅读：<a href="./lowmem-reserve-ratio.html" style="color:var(--blue)">《读个 sysctl 也要全局重算？lowmem_reserve_ratio 读写解耦修复》</a>——
+          同样是读路径的副作用，那边是性能问题，这边是正确性问题。两类放在一起看，"handler 分层"这个习惯的价值会非常直观。
+        </p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>NAME</h4>
+        <p style="margin:0">施健林 / Shi Jianlin — 本文为补丁复盘，具体 diff 以上游 commit 为准。</p>
+      </div>
+      <div>
+        <h4>SEE ALSO</h4>
+        <ul>
+          <li><a href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=874611d193f2">874611d193f2 @ mainline</a></li>
+          <li><a href="https://github.com/ArthurJianlin">github.com/ArthurJianlin</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>CONTACT</h4>
+        <ul>
+          <li><a href="mailto:shijianlin11@foxmail.com">shijianlin11@foxmail.com</a></li>
+          <li><a href="../about.html">关于我 / 简历</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="foot-note">
+      <span>(C) 2026 施健林</span>
+      <span>page rendered at <span id="year">2026</span></span>
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>
