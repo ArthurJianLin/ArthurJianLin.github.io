@@ -69,4 +69,3 @@ gh api repos/<你的GitHub用户名>/mypages/pages -X POST \
 - 移动端 680px / 960px 两档响应式断点
 - 零图片、零外链依赖，首屏体积 < 40KB
 
-> AI生成
